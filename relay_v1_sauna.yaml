@@ -1,0 +1,608 @@
+# This is a yaml for the relay board in the sauna and jacuzzi automation. 
+# I added internal GPIO12 (from the board) to use as a rain sensor.
+#
+#
+#
+
+substitutions:
+  devicename: relay-board-2
+  countdown_time: 10s
+
+globals:
+   - id: my_global_int
+     type: int
+     restore_value: no
+     initial_value: '0'
+   # Example for global string variable
+   - id: my_version
+     type: std::string
+     restore_value: yes
+     max_restore_data_length: 24
+     initial_value: '"2.0"'
+
+   - id: board_no
+     type: std::string
+     restore_value: yes
+     max_restore_data_length: 24
+     initial_value: '"2"'
+
+esphome:
+  name: ${devicename}
+  friendly_name: "Relay board 2"
+  min_version: 2025.5.0
+  name_add_mac_suffix: false  
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "uykUqYA1dAvS/FBXd2DbCjlU1HevArnj3BO0nyue6ak="
+
+ota:
+  - platform: esphome
+    password: !secret ota_pass
+    id: my_ota
+
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+#  manual_ip:
+    # Set this to the IP of the ESP
+#    static_ip: 192.168.100.96
+    # Set this to the IP address of the router. Often ends with .1
+#    gateway: 192.168.100.1
+    # The subnet of the network. 255.255.255.0 works for most home networks.
+#    subnet: 255.255.255.0
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${devicename} "Fallback Hotspot"
+    password: "iYZ1o8BoaAzV"
+
+captive_portal:
+
+
+web_server:
+  port: 80
+  version: 3
+  auth:
+    username: !secret web_server_username
+    password: !secret web_server_password  
+
+time:
+  - platform: ds1307
+    id: ds1307_time
+    on_time_sync:
+      - ds1307.read_time:
+          id: ds1307_time    
+# DS18B20 TEMPERATURE SENSOR DETECT
+one_wire:
+  - platform: gpio
+    pin: GPIO32
+    id: hub_1
+  - platform: gpio
+    pin: GPIO33
+    id: hub_2
+
+
+sensor:
+
+  - platform: dallas_temp
+    address: 0x8f0b24416e3b8d28
+    one_wire_id: hub_2
+    name: "Temp_01"
+    id: temp01
+
+  - platform: dallas_temp
+    address: 0x680b244172ddf328
+    one_wire_id: hub_2
+    name: "Temp_02"
+    id: temp02
+
+  - platform: dallas_temp
+    address: 0xf20b244177e3ad28
+    one_wire_id: hub_1
+    name: "Temp_03"
+    id: temp03
+
+
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: ${devicename} WiFi Signal dB
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  - platform: uptime
+    name: '${devicename} uptime'
+    id: device_uptime
+    unit_of_measurement: days
+    update_interval: 300s
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.000011574
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: ${devicename} WiFi Signal %
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: " %"
+    entity_category: "diagnostic"
+    id: wifi_signal_prc
+
+  - platform: adc
+    pin: GPIO36
+    name: "Analog_01"
+    id: 'shconfig'
+    raw: true
+    attenuation: 12db
+    filters:
+      - multiply: 0.001221
+    update_interval: 3s
+    on_value_range:
+      - above: 2.0
+        then:
+          - script.execute: display_device
+  
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP Address
+      id: esp_ip
+      icon: "mdi:information-box"
+    ssid:
+      name: WIFI SSID
+      id: esp_ssid
+      icon: "mdi:information-box"
+    mac_address:
+      name: MAC Address
+      id: esp_mac
+      icon: "mdi:information-box"
+      
+
+  - platform: template
+    name: ${devicename} firmware version
+    id: relay_board_firmware
+    icon: "mdi:information-box"
+    entity_category: "diagnostic"
+    lambda: |-
+      return { id(my_version).c_str() };       
+ 
+#I2C bus define
+i2c:
+  sda: 4
+  scl: 15
+  scan: true
+  id: bus_a
+
+font:
+  - file: "gfonts://Roboto"
+    id: my_font
+    size: 11
+    bpp: 2
+
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    id: oled_display
+    address: 0x3C
+    
+    pages:
+      - id: page1
+        lambda: |-
+          // Write your display rendering code here
+          it.rectangle (1,1,126,62);
+          it.rectangle(1, 1, 126, 15);
+          it.printf(64,10, id(my_font), TextAlign::BASELINE_CENTER, "Network");
+          it.printf(4, 27, id(my_font), TextAlign::BASELINE_LEFT, "SSID:");
+          it.printf(125, 27, id(my_font), TextAlign::BASELINE_RIGHT, "%s", id(esp_ssid).state.c_str());
+          it.printf(4, 39, id(my_font), TextAlign::BASELINE_LEFT, "IP");
+          it.printf(125, 39, id(my_font), TextAlign::BASELINE_RIGHT, "%s", id(esp_ip).state.c_str());
+          it.printf(4, 51, id(my_font), TextAlign::BASELINE_LEFT, "Board:");
+          it.printf(125, 51, id(my_font), TextAlign::BASELINE_RIGHT, "%s", id(board_no).c_str());
+          it.printf(4, 63, id(my_font), TextAlign::BASELINE_LEFT, "Signal:");
+          it.printf(125, 63, id(my_font), TextAlign::BASELINE_RIGHT, "%.2f", id(wifi_signal_prc).state);
+
+      - id: page1a
+        lambda: |-
+          // Write your display rendering code here
+          it.rectangle (1,1,126,62);
+          it.rectangle(1, 1, 126, 15);
+          it.printf(64,10, id(my_font), TextAlign::BASELINE_CENTER, "Information");
+          it.printf(4, 27, id(my_font), TextAlign::BASELINE_LEFT, "Uptime:");
+          it.printf(125, 27, id(my_font), TextAlign::BASELINE_RIGHT, "%.1f", id(device_uptime).state);
+          it.printf(4, 39, id(my_font), TextAlign::BASELINE_LEFT, "Version:");
+          it.printf(125, 39, id(my_font), TextAlign::BASELINE_RIGHT, "%s", id(relay_board_firmware).state.c_str());
+          it.printf(4, 51, id(my_font), TextAlign::BASELINE_LEFT, "Board:");
+          it.printf(125, 51, id(my_font), TextAlign::BASELINE_RIGHT, "%s", id(board_no).c_str());
+          it.printf(4, 63, id(my_font), TextAlign::BASELINE_LEFT, "Signal:");
+          it.printf(125, 63, id(my_font), TextAlign::BASELINE_RIGHT, "%.2f", id(wifi_signal_prc).state);
+
+
+      - id: page2
+        lambda: |-
+          // Write your display rendering code here
+
+          it.print(2, 0,  id(my_font), "INPUT:");
+
+          if (id(input01).state)
+          { it.filled_rectangle(2,12,19,18);
+          }
+          else 
+          { it.rectangle(2,12,19,18);
+          }
+
+          if (id(input02).state)
+          { it.filled_rectangle(23,12,19,18);
+          }
+          else 
+          { it.rectangle(23,12,19,18);
+          }
+
+          if (id(input03).state)
+          { it.filled_rectangle(44,12,19,18);
+          }
+          else 
+          { it.rectangle(44,12,19,18);
+          }
+
+          if (id(input04).state)
+          { it.filled_rectangle(65,12,19,18);
+          }
+          else 
+          { it.rectangle(65,12,19,18);
+          }
+
+          if (id(input05).state)
+          { it.filled_rectangle(86,12,19,18);
+          }
+          else 
+          { it.rectangle(86,12,19,18);
+          }
+
+
+          if (id(input06).state)
+          { it.filled_rectangle(107,12,19,18);
+          }
+          else 
+          { it.rectangle(107,12,19,18);
+          }
+
+          // Bootom part of the screen      
+          it.print(2, 32,  id(my_font), "OUTPUT:");
+          
+          if (id(relay01).state)
+          { it.filled_rectangle(2,44,19,18);
+          }
+          else 
+          { it.rectangle(2,44,19,18);
+          }
+
+          if (id(relay02).state)
+          { it.filled_rectangle(23,44,19,18);
+          }
+          else 
+          { it.rectangle(23,44,19,18);
+          }
+
+          if (id(relay03).state)
+          { it.filled_rectangle(44,44,19,18);
+          }
+          else 
+          { it.rectangle(44,44,19,18);
+          }
+
+          if (id(relay04).state)
+          { it.filled_rectangle(65,44,19,18);
+          }
+          else 
+          { it.rectangle(65,44,19,18);
+          }
+
+          if (id(relay05).state)
+          { it.filled_rectangle(86,44,19,18);
+          }
+          else 
+          { it.rectangle(86,44,19,18);
+          }
+
+
+          if (id(relay06).state)
+          { it.filled_rectangle(107,44,19,18);
+          }
+          else 
+          { it.rectangle(107,44,19,18);
+          }
+
+      - id: page3
+        lambda: |-
+          // this will be a black display 
+
+          it.print(2, 0,  id(my_font), " ");
+
+
+script:
+  - id: print_info
+    then:
+      - display.page.show: page2      
+      - delay: ${countdown_time}
+      - display.page.show: page3
+  - id: print_device
+    then:
+      - display.page.show: page1      
+      - delay: ${countdown_time}
+      - display.page.show: page1a
+      - delay: ${countdown_time}
+      - display.page.show: page3  
+  - id: display_info
+    then: 
+      - if:
+         condition:
+          or: 
+           - script.is_running: print_info
+           - script.is_running: print_device
+         then:
+#          - logger.log: "Countdoun resat"
+           - script.stop: print_info
+           - script.stop: print_device
+           - script.execute: print_info
+         else:
+           - script.execute: print_info
+  - id: display_device
+    then: 
+      - if:
+         condition:
+          or: 
+           - script.is_running: print_info
+           - script.is_running: print_device
+         then:
+#          - logger.log: "Countdoun resat"
+           - script.stop: print_info
+           - script.stop: print_device
+           - script.execute: print_device
+         else:
+           - script.execute: print_device
+
+
+pcf8574:
+    # relay output control
+  - id: 'pcf8574_hub_out_1'  
+    address: 0x24
+    # digital input 
+  - id: 'pcf8574_hub_in_1'  
+    address: 0x22  
+
+switch:
+  - platform: gpio
+    name: "relay1"
+    id: 'relay01'
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      # set pin number
+      number: 0
+      # set pinMode
+      mode: OUTPUT
+      inverted: true
+    on_turn_off:
+      then:
+        - script.execute: display_info      
+    on_turn_on: 
+      then:
+        - script.execute: display_info      
+
+  - platform: gpio
+    name: "relay2"
+    id: 'relay02'
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 1
+      mode: OUTPUT
+      inverted: true
+    on_turn_off:
+      then:
+        - script.execute: display_info      
+    on_turn_on: 
+      then:
+        - script.execute: display_info      
+
+
+  - platform: gpio
+    name: "relay3"
+    id: 'relay03'
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 2
+      mode: OUTPUT
+      inverted: true
+    on_turn_off:
+      then:
+        - script.execute: display_info      
+    on_turn_on: 
+      then:
+        - script.execute: display_info      
+
+  - platform: gpio
+    name: "relay4"
+    id: 'relay04'
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 3
+      mode: OUTPUT
+      inverted: true
+    on_turn_off:
+      then:
+        - script.execute: display_info      
+    on_turn_on: 
+      then:
+        - script.execute: display_info      
+
+      
+  - platform: gpio
+    name: "relay5"
+    id: 'relay05'
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 4
+      mode: OUTPUT
+      inverted: true
+    on_turn_off:
+      then:
+        - script.execute: display_info      
+    on_turn_on: 
+      then:
+        - script.execute: display_info      
+
+      
+  - platform: gpio
+    name: "relay6"
+    id: 'relay06'
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 5
+      mode: OUTPUT
+      inverted: true
+    on_turn_off:
+      then:
+        - script.execute: display_info      
+    on_turn_on: 
+      then:
+        - script.execute: display_info      
+
+
+#6 digital input detect
+binary_sensor:
+
+  - platform: status
+    name: ${devicename} Status
+    id: esp_status
+
+# Adding switch for on-board GPIO 12
+# I have to add this swhich to circumvent pcf8574 (IO Expander) hub.
+# Mode: polling	Because the sensor is on an I/O expander, the ESP has to "poll" it. 
+# This means the ESP asks the chip, "Is it raining yet?" at regular intervals, rather than the chip instantly "interrupting" the ESP.
+# For my rain sensor I neet interrupt model
+
+#  - platform: gpio
+#    name: "Rain_Sensor1"
+#    id: "rainsensor1"
+#    pin:
+#      number: GPIO12
+#      mode: INPUT_PULLUP
+#      inverted: false
+
+# GPIO12 doesnt work as expected. I use GPIO13 
+
+  - platform: gpio
+    name: "Rain_Sensor"
+    id: "rainsensor"
+    pin:
+      number: GPIO13
+      mode: INPUT_PULLUP
+      inverted: true
+
+
+
+  - platform: gpio
+    name: "INPUT_01"
+    id: 'input01'
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 0
+      mode: input
+      inverted: true
+    on_press:
+      then:
+        - script.execute: display_info      
+    on_release: 
+      then:
+        - script.execute: display_info      
+
+ 
+
+  - platform: gpio
+    name: "INPUT_02"
+    id: 'input02'
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 1
+      mode: input
+      inverted: true
+    on_press:
+      then:
+        - script.execute: display_info      
+    on_release: 
+      then:
+        - script.execute: display_info       
+
+
+  - platform: gpio
+    name: "INPUT_03"
+    id: 'input03'
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 2
+      mode: input
+      inverted: true
+    on_press:
+      then:
+        - script.execute: display_info      
+    on_release: 
+      then:
+        - script.execute: display_info     
+
+
+  - platform: gpio
+    name: "INPUT_04"
+    id: 'input04'
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 3
+      mode: input
+      inverted: true
+    on_press:
+      then:
+        - script.execute: display_info      
+    on_release: 
+      then:
+        - script.execute: display_info   
+
+
+  - platform: gpio
+    name: "INPUT_05"
+    id: 'input05'
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 4
+      mode: input
+      inverted: true
+    on_press:
+      then:
+        - script.execute: display_info      
+    on_release: 
+      then:
+        - script.execute: display_info    
+
+
+  - platform: gpio
+    name: "INPUT_06"
+    id: 'input06'
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 5
+      mode: input
+      inverted: true
+    on_press:
+      then:
+        - script.execute: display_info      
+    on_release: 
+      then:
+        - script.execute: display_info     
